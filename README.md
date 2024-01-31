@@ -29,7 +29,10 @@ cd XRayAutoScript4Vultr
 3. 给予脚本执行权限：
 
 ```bash
-chmod +x autoscript.sh
+chmod +x create-vultr-instance.sh
+chmod +x install-vps.sh
+chmod +x remove-vultr-instance.sh
+
 ```
 
 4. 根据需要编辑脚本文件以配置 Xray 安装选项及其他设置。
@@ -38,10 +41,15 @@ chmod +x autoscript.sh
 
 ## 使用说明
 
-运行 AutoScript4Vultr 脚本来创建并设置你的 Vultr VPS 实例：
+按需运行 XRayAutoScript4Vultr 脚本来创建并设置你的 Vultr VPS 实例：
 
 ```bash
-./autoscript.sh
+crontab -l
+
+0 1 * * * /root/vultr/remove-vultr-instance.sh  >> /root/vultr/log_remove.log 2>&1
+0 23 * * * /root/vultr/create-vultr-instance.sh >> /root/vultr/log_create.log 2>&1
+10 23 * * * /root/vultr/install-vps.sh >> /root/vultr/log_install.log 2>&1
+30 1 * * * /root/vultr/remove-vultr-instance.sh  >> /root/vultr/log_remove.log 2>&1
 ```
 
 按照提示进行操作，完成后会收到包含新建 VPS 连接信息的消息推送至你设置好的钉钉群。
