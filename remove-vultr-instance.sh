@@ -1,30 +1,14 @@
 #!/bin/bash
 
-# --------------------------------------------------
-# Vultr API KEY
-export VULTR_API_KEY="your vultr api key"
 
-# Vultr CLI 命令路径（如果已经在环境变量中，直接使用 vultr-cli 即可）
-VULTR_CLI="/root/vultr/vultr-cli"
-HOME_PATH="your script dir path"
-
-# Vultr SSH 私钥文件路径,默认为/root/.ssh/id_rsa
-SSH_KEY_PATH="your ssh path"
-
-
-# 钉钉 webhook_url,https://oapi.dingtalk.com/robot/send?access_token=12321321321321312321321
-WEBHOOK_URL= "your dingding url"
-
-# --------------------------------------------------
-
-
+# 导入配置文件
+source ./conf.env
 
 # DingDing 通知
 send_dingtalk_message() {
     local message=$1
-    local webhook_url=$WEBHOOK_URL
     # 发送POST请求
-    curl "$webhook_url" \
+    curl "$DINGTALK_NOTICE_WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
             \"msgtype\": \"text\",

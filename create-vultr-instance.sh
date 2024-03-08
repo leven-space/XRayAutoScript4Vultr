@@ -1,38 +1,31 @@
 #!/bin/bash
 
-# --------------------------------------------------
-# Vultr API KEY
-export VULTR_API_KEY="your vultr api key"
-
-# Vultr CLI 命令路径（如果已经在环境变量中，直接使用 vultr-cli 即可）
-VULTR_CLI="/root/vultr/vultr-cli"
-HOME_PATH="your script dir path"
-
-# Vultr SSH 私钥文件路径,默认为/root/.ssh/id_rsa
-SSH_KEY_PATH="your ssh path"
-
-# 创建Vultr实例的参数
-REGION="nrt"
-PLAN="vc2-1c-1gb"
-OS_ID="2136"
-SSH_KEY_ID="your vultr ssh key id"
-
-# 钉钉 webhook_url
-WEBHOOK_URL= "your dingding url"
-
-# --------------------------------------------------
-
+# 导入配置文件
+source ./conf.env
 
 # 创建临时文件用于存储输出信息
 OUTPUT_FILE=$(mktemp)
+
+# 默认值
+region=$VULTR_INSTANCE_REGION
+xrayschema=tcp
+
+# 解析命令行选项和参数
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --region) region="$2"; shift ;; 
+        --xrayschema) xrayschema="$2"; shift ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift # 移动到下一个键值对
+done
 
 
 # DingDing 通知
 send_dingtalk_message() {
     local message=$1
-    local webhook_url=$WEBHOOK_URL
     # 发送POST请求
-    curl "$webhook_url" \
+    curl "$DINGTALK_NOTICE_WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
             \"msgtype\": \"text\",
@@ -42,8 +35,8 @@ send_dingtalk_message() {
         }"
 }
 
-# 首先调用 remove-vultr-instance.sh 脚本来删除现有实例,注意需要配置
-sh $HOME_PATH/remove-vultr-instance.sh
+# 首先调用 remove-vultr-instance.sh 脚本来删除现有实例
+sh /root/vultr/remove-vultr-instance.sh
 
 # 检查上一个命令是否成功执行
 if [ $? -ne 0 ]; then
@@ -52,9 +45,10 @@ if [ $? -ne 0 ]; then
 fi
 
 
+
 # 创建实例并获取ID
 echo "Creating Vultr instance..."
-CREATE_OUTPUT=$($VULTR_CLI instance create --region $REGION --plan $PLAN --os $OS_ID --ssh-keys $SSH_KEY_ID)
+CREATE_OUTPUT=$($VULTR_CLI instance create --region $region --plan $VULTR_INSTANCE_PLAN --os $VULTR_INSTANCE_OS_ID --ssh-keys $SSH_KEY_ID)
 
 if [[ $? -ne 0 ]]; then
     echo "Failed to create Vultr instance." | tee -a "$OUTPUT_FILE"
@@ -89,7 +83,7 @@ done
 
 echo "Instance is active with MAIN IP: $MAIN_IP" | tee -a "$OUTPUT_FILE"
 
-echo "Waiting for 1 minute before logging in..."
+echo "Waiting for 2 minute before logging in..."
 sleep 120
 
 # SSH 登陆到主机并禁用UFW防火墙 (确保你有权限无密码登陆)
@@ -108,6 +102,10 @@ echo "Running install xray script from GitHub..." | tee -a "$OUTPUT_FILE"
 INSTALL_OUTPUT=$(ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'bash <(wget -qO- -o- https://github.com/233boy/Xray/raw/main/install.sh)')
 
 echo "$INSTALL_OUTPUT" | tee -a "$OUTPUT_FILE"
+
+echo "Running xray to create tcp" | tee -a "$OUTPUT_FILE"
+ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'xray del' | tee -a "$OUTPUT_FILE"
+ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'xray add tcp' | tee -a "$OUTPUT_FILE"
 
 # 将临时文件内容读取到变量中，并发送通知消息至钉钉群组机器人
 MESSAGE_CONTENT=$(<"$OUTPUT_FILE")

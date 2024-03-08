@@ -1,37 +1,29 @@
 #!/bin/bash
 
-# --------------------------------------------------
-# Vultr API KEY
-export VULTR_API_KEY="your vultr api key"
-
-# Vultr CLI 命令路径（如果已经在环境变量中，直接使用 vultr-cli 即可）
-VULTR_CLI="/root/vultr/vultr-cli"
-HOME_PATH="your script dir path"
-
-# Vultr SSH 私钥文件路径,默认为/root/.ssh/id_rsa
-SSH_KEY_PATH="your ssh path"
-
-# 创建Vultr实例的参数
-REGION="nrt"
-PLAN="vc2-1c-1gb"
-OS_ID="2136"
-SSH_KEY_ID="your vultr ssh key id"
-
-# 钉钉 webhook_url
-WEBHOOK_URL= "your dingding url"
-
-# --------------------------------------------------
+# 导入配置文件
+source ./conf.env
 
 # 创建临时文件用于存储输出信息
 OUTPUT_FILE=$(mktemp)
+
+# 默认值
+xrayschema=reality
+
+# 解析命令行选项和参数
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --xrayschema) xrayschema="$2"; shift ;;
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift # 移动到下一个键值对
+done
 
 
 # DingDing 通知
 send_dingtalk_message() {
     local message=$1
-    local webhook_url=$WEBHOOK_URL
     # 发送POST请求
-    curl "$webhook_url" \
+    curl "$DINGTALK_NOTICE_WEBHOOK_URL" \
         -H 'Content-Type: application/json' \
         -d "{
             \"msgtype\": \"text\",
@@ -60,7 +52,9 @@ EOF
   # 运行 GitHub 上的 xray 安装脚本
   echo "Running install xray script from GitHub on $MAIN_IP..." | tee -a "$OUTPUT_FILE"
   INSTALL_OUTPUT=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'bash <(wget -qO- https://github.com/233boy/Xray/raw/main/install.sh)')
-
+  echo "Running xray to create tcp" | tee -a "$OUTPUT_FILE"
+  ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'xray del' | tee -a "$OUTPUT_FILE"
+  ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'xray add ' $xrayschema | tee -a "$OUTPUT_FILE"
   echo "$INSTALL_OUTPUT" | tee -a "$OUTPUT_FILE"
 }
 
@@ -83,7 +77,7 @@ else
           # 使用 awk 正则表达式来匹配 MAIN IP 后跟随的IP地址
           MAIN_IP=$(echo "$INSTANCE_INFO" | awk '/MAIN IP/ {for(i=1;i<=NF;i++) if ($i=="IP") print $(i+1)}')
           echo "Instance is active with MAIN IP: $MAIN_IP" | tee -a "$OUTPUT_FILE"
-	  disable_ufw_and_install_xray $MAIN_IP
+	      disable_ufw_and_install_xray $MAIN_IP
         fi
         # 等待一段时间，以防API限制速率（可选）
         sleep 5
