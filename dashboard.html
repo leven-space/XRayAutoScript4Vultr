@@ -25,7 +25,6 @@
             </div>
         </div>
 
-
         <div class="row justify-content-center mb-2">
             <div class="col-md-6">
                 <!-- Create Form -->
@@ -38,6 +37,10 @@
                             <option value='bom'>Mumbai</option>
                             <option value='icn'>Seoul</option>
                         </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="duration">Running Duration (e.g. 55min):</label>
+                        <input type="text" class="form-control" id="duration" value="55">
                     </div>
                     <button type="submit" class="btn btn-primary btn-block mt-2">Execute create.sh</button>
                 </form>
@@ -85,11 +88,15 @@
             $('#createForm').on('submit', function (e) {
                 e.preventDefault();
                 var region = $('#regions').val();
+                var duration = $('#duration').val();
+                //清空结果
+                $('#result').html('<pre></pre>');
+
                 $.ajax({
                     url: '/vps/create',
                     type: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({ password: getPassword(), region: region }),
+                    data: JSON.stringify({ password: getPassword(), region: region ,duration: duration}),
                     success: function (response) {
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
                     },
@@ -102,7 +109,7 @@
 
             $('#removeForm').on('submit', function (e) {
                 e.preventDefault();
-
+                $('#result').html('<pre></pre>');
                 $.ajax({
                     url: '/vps/remove',
                     type: 'POST',
@@ -121,6 +128,7 @@
             $('#reinstallForm').on('submit', function (e) {
                 e.preventDefault();
                 var xrayschema = $('#xraySchema').val();
+                $('#result').html('<pre></pre>');
                 $.ajax({
                     url: '/vps/xray',
                     type: 'POST',
