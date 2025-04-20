@@ -33,7 +33,7 @@ send_dingtalk_message() {
         }"
 }
 
-disable_ufw_and_install_xray() {
+install_and_configure_xray() {
   local MAIN_IP="$1"
 
   # 禁用 UFW 防火墙
@@ -49,13 +49,81 @@ EOF
       return 1 # 返回错误状态码，终止函数执行
   fi
 
-  # 运行 GitHub 上的 xray 安装脚本
-  echo "Running install xray script from GitHub on $MAIN_IP..." | tee -a "$OUTPUT_FILE"
-  INSTALL_OUTPUT=$(ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'bash <(wget -qO- https://github.com/233boy/Xray/raw/main/install.sh)')
-  echo "Running xray to create tcp" | tee -a "$OUTPUT_FILE"
-  ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'xray del' | tee -a "$OUTPUT_FILE"
-  ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP 'xray add ' $xrayschema | tee -a "$OUTPUT_FILE"
-  echo "$INSTALL_OUTPUT" | tee -a "$OUTPUT_FILE"
+  # 检查 XRay 是否已安装
+  echo "Checking if XRay is already installed on $MAIN_IP..." | tee -a "$OUTPUT_FILE"
+  XRAY_CHECK=$(timeout 30 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'command -v xray || echo "not_installed"')
+  
+  if [[ "$XRAY_CHECK" == "not_installed" ]]; then
+    # 运行 GitHub 上的 xray 安装脚本
+    echo "XRay not installed. Running install script from GitHub on $MAIN_IP..." | tee -a "$OUTPUT_FILE"
+    INSTALL_OUTPUT=$(timeout 300 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'bash <(wget -qO- https://github.com/233boy/Xray/raw/main/install.sh)')
+    INSTALL_STATUS=$?
+    if [[ $INSTALL_STATUS -eq 124 ]]; then
+      echo "XRay installation timed out after 5 minutes on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "XRay installation timed out on $MAIN_IP. Please check the server manually."
+      return 1
+    elif [[ $INSTALL_STATUS -ne 0 ]]; then
+      echo "XRay installation failed with error code $INSTALL_STATUS on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "XRay installation failed on $MAIN_IP. Please check the server manually."
+      return 1
+    fi
+    echo "$INSTALL_OUTPUT" | tee -a "$OUTPUT_FILE"
+  else
+    echo "XRay is already installed on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+  fi
+
+  # 检查配置文件是否存在
+  CONFIG_CHECK=$(timeout 30 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'ls -1 /etc/xray/ | grep -c json || echo "0"')
+  
+  echo "Creating new XRay configuration with schema: $xrayschema" | tee -a "$OUTPUT_FILE"
+  if [[ "$CONFIG_CHECK" != "0" ]]; then
+    # 存在配置文件，保留现有配置并添加新配置
+    echo "Existing configuration found. Adding new configuration..." | tee -a "$OUTPUT_FILE"
+    CONFIG_OUTPUT=$(timeout 60 ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP "xray add $xrayschema")
+    CONFIG_STATUS=$?
+    if [[ $CONFIG_STATUS -eq 124 ]]; then
+      echo "XRay configuration creation timed out after 60 seconds on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "XRay configuration creation timed out on $MAIN_IP. Please check the server manually."
+      return 1
+    elif [[ $CONFIG_STATUS -ne 0 ]]; then
+      echo "XRay configuration creation failed with error code $CONFIG_STATUS on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "XRay configuration creation failed on $MAIN_IP. Please check the server manually."
+      return 1
+    fi
+    echo "$CONFIG_OUTPUT" | tee -a "$OUTPUT_FILE"
+  else
+    # 不存在配置文件，直接添加新配置
+    echo "No existing configuration found. Creating new configuration..." | tee -a "$OUTPUT_FILE"
+    CONFIG_OUTPUT=$(timeout 60 ssh -o StrictHostKeyChecking=no -i $SSH_KEY_PATH root@$MAIN_IP "xray add $xrayschema")
+    CONFIG_STATUS=$?
+    if [[ $CONFIG_STATUS -eq 124 ]]; then
+      echo "XRay configuration creation timed out after 60 seconds on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "XRay configuration creation timed out on $MAIN_IP. Please check the server manually."
+      return 1
+    elif [[ $CONFIG_STATUS -ne 0 ]]; then
+      echo "XRay configuration creation failed with error code $CONFIG_STATUS on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "XRay configuration creation failed on $MAIN_IP. Please check the server manually."
+      return 1
+    fi
+    echo "$CONFIG_OUTPUT" | tee -a "$OUTPUT_FILE"
+  fi
+  
+  # 检查XRay是否正在运行
+  echo "Checking if XRay service is running on $MAIN_IP..." | tee -a "$OUTPUT_FILE"
+  SERVICE_STATUS=$(timeout 30 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'systemctl is-active xray || echo "inactive"')
+  if [[ "$SERVICE_STATUS" == "active" ]]; then
+    echo "XRay service is running on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+  else
+    echo "XRay service is not running on $MAIN_IP. Attempting to start..." | tee -a "$OUTPUT_FILE"
+    START_OUTPUT=$(timeout 30 ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_PATH" root@"$MAIN_IP" 'systemctl start xray')
+    START_STATUS=$?
+    if [[ $START_STATUS -ne 0 ]]; then
+      echo "Failed to start XRay service on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+      send_dingtalk_message "Failed to start XRay service on $MAIN_IP. Please check the server manually."
+      return 1
+    fi
+    echo "XRay service started on $MAIN_IP." | tee -a "$OUTPUT_FILE"
+  fi
 }
 
 
@@ -77,7 +145,11 @@ else
           # 使用 awk 正则表达式来匹配 MAIN IP 后跟随的IP地址
           MAIN_IP=$(echo "$INSTANCE_INFO" | awk '/MAIN IP/ {for(i=1;i<=NF;i++) if ($i=="IP") print $(i+1)}')
           echo "Instance is active with MAIN IP: $MAIN_IP" | tee -a "$OUTPUT_FILE"
-	      disable_ufw_and_install_xray $MAIN_IP
+          
+          # 确保即使安装失败也会继续处理其他实例
+          if ! install_and_configure_xray $MAIN_IP; then
+            echo "Failed to complete installation on $MAIN_IP. Continuing with other instances..." | tee -a "$OUTPUT_FILE"
+          fi
         fi
         # 等待一段时间，以防API限制速率（可选）
         sleep 5
