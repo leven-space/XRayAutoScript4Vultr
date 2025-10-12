@@ -158,14 +158,10 @@ fi
 
 
 
-# 优化推送内容：优先推送VLESS链接
+# 优化推送内容：优先推送VLESS链接（用END分隔符判断完整段落）
 MESSAGE_CONTENT=$(<"$OUTPUT_FILE")
-VLESS_LINK=$(echo "$MESSAGE_CONTENT" | grep -oE 'vless://[^\s\\"]+')
-if [[ -n "$VLESS_LINK" ]]; then
-  send_dingtalk_message "VLESS链接: $VLESS_LINK"
-else
-  send_dingtalk_message "$MESSAGE_CONTENT"
-fi
+send_dingtalk_message "$MESSAGE_CONTENT"
+
 
 # 清理：删除临时文件
 rm "$OUTPUT_FILE"
