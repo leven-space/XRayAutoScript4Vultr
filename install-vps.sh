@@ -157,9 +157,15 @@ else
 fi
 
 
-# 将临时文件内容读取到变量中，并发送通知消息至钉钉群组机器人
+
+# 优化推送内容：优先推送VLESS链接
 MESSAGE_CONTENT=$(<"$OUTPUT_FILE")
-send_dingtalk_message "$MESSAGE_CONTENT"
+VLESS_LINK=$(echo "$MESSAGE_CONTENT" | grep -oE 'vless://[^\s\\"]+')
+if [[ -n "$VLESS_LINK" ]]; then
+  send_dingtalk_message "VLESS链接: $VLESS_LINK"
+else
+  send_dingtalk_message "$MESSAGE_CONTENT"
+fi
 
 # 清理：删除临时文件
 rm "$OUTPUT_FILE"

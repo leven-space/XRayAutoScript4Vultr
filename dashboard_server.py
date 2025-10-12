@@ -33,12 +33,6 @@ def run_shell_script(script_path, args=None):
         }
     
 def scheduled_instance_removal(duration):
-    # 等待指定的时间
-    time.sleep(duration*60)
-    inporcess_lock=False
-    # 调用销毁脚本
-    logger.info(f"Remove VPS instance with region because duration: {duration} min finished")
-    run_shell_script('./remove-vultr-instance.sh')
 
 @app.route('/vps/create', methods=['POST'])
 def create():
@@ -58,13 +52,7 @@ def create():
     duration = int(data.get('duration'))
     if duration < 4:
         duration=55
-    
-    if duration > 0:
-        removal_thread = threading.Thread(target=scheduled_instance_removal, args=(duration,))
         removal_thread.start()
-
-    logger.info(f"Creating VPS instance with region: {region} and duration: {duration} min")
-    script_output = run_shell_script('./create-vultr-instance.sh',script_args)
     return jsonify(script_output)
 
 @app.route('/vps/remove', methods=['POST'])
