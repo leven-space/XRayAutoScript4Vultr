@@ -18,23 +18,15 @@
                     <h2 class="font-weight-bold">VPS 管理面板</h2>
                     <p class="text-muted mb-0">一键创建、安装、删除 Vultr VPS</p>
                 </div>
-                
-                <!-- 登录界面 -->
-                <div id="loginSection" class="card shadow-sm mb-3">
+                <div class="card shadow-sm mb-3">
                     <div class="card-body">
-                        <form id="loginForm" method="post" autocomplete="off">
-                            <div class="form-group mb-3">
-                                <label for="loginPassword">请输入管理密码</label>
-                                <input type="password" class="form-control" id="loginPassword" placeholder="管理密码" autofocus>
+                        <form id="passwordForm" method="post" autocomplete="off">
+                            <div class="form-group mb-2">
+                                <input type="password" class="form-control" id="password" placeholder="管理密码">
                             </div>
-                            <button type="submit" class="btn btn-primary btn-block">登录</button>
                         </form>
-                        <div id="loginError" class="alert alert-danger mt-3" style="display: none;"></div>
                     </div>
                 </div>
-                
-                <!-- 功能界面（登录后显示） -->
-                <div id="dashboardSection" style="display: none;">
                 <div class="card shadow-sm mb-3">
                     <div class="card-body">
                         <form id="createForm" method="post">
@@ -96,10 +88,6 @@
                     </div>
                 </div>
                 <div id='result' class="mt-3"></div>
-                <div class="text-center mt-3">
-                    <button id="logoutBtn" class="btn btn-secondary btn-sm">退出登录</button>
-                </div>
-                </div>
             </div>
         </div>
     </div>
@@ -114,31 +102,8 @@
             $('#loader').hide();
         }
 
-        function checkAuthStatus() {
-            $.ajax({
-                url: '/api/check-auth',
-                type: 'GET',
-                success: function (response) {
-                    if (response.logged_in) {
-                        showDashboard();
-                    } else {
-                        showLogin();
-                    }
-                },
-                error: function () {
-                    showLogin();
-                }
-            });
-        }
-
-        function showLogin() {
-            $('#loginSection').show();
-            $('#dashboardSection').hide();
-        }
-
-        function showDashboard() {
-            $('#loginSection').hide();
-            $('#dashboardSection').show();
+        function getPassword() {
+            return $('#password').val();
         }
 
         function checkStatus() {
@@ -153,60 +118,13 @@
                         $('#result').html('<pre>任务已完成！</pre>');
                     }
                 },
-                error: function (xhr) {
-                    if (xhr.status === 401) {
-                        showLogin();
-                        $('#result').html('<pre>登录已过期，请重新登录</pre>');
-                    } else {
-                        $('#result').html('<pre>检查状态时出错</pre>');
-                    }
+                error: function () {
+                    $('#result').html('<pre>检查状态时出错</pre>');
                 }
             });
         }
 
         $(document).ready(function () {
-            // 页面加载时检查登录状态
-            checkAuthStatus();
-
-            // 登录表单提交
-            $('#loginForm').on('submit', function (e) {
-                e.preventDefault();
-                var password = $('#loginPassword').val();
-                $('#loginError').hide();
-
-                $.ajax({
-                    url: '/api/login',
-                    type: 'POST',
-                    contentType: 'application/json',
-                    data: JSON.stringify({ password: password }),
-                    success: function (response) {
-                        if (response.success) {
-                            showDashboard();
-                            $('#loginPassword').val('');
-                        } else {
-                            $('#loginError').text(response.error || '登录失败').show();
-                        }
-                    },
-                    error: function (xhr) {
-                        var errorMsg = '登录失败';
-                        if (xhr.responseJSON && xhr.responseJSON.error) {
-                            errorMsg = xhr.responseJSON.error;
-                        }
-                        $('#loginError').text(errorMsg).show();
-                    }
-                });
-            });
-
-            // 退出登录
-            $('#logoutBtn').on('click', function () {
-                $.ajax({
-                    url: '/api/logout',
-                    type: 'POST',
-                    success: function () {
-                        showLogin();
-                    }
-                });
-            });
 
             // Create script AJAX call
             $('#createForm').on('submit', function (e) {
@@ -222,19 +140,14 @@
                     url: '/vps/create',
                     type: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({ region: region, duration: duration}),
+                    data: JSON.stringify({ password: getPassword(), region: region ,duration: duration}),
                     success: function (response) {
                         hideLoader();
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
                     },
-                    error: function (xhr) {
+                    error: function (response) {
                         hideLoader();
-                        if (xhr.status === 401) {
-                            showLogin();
-                            $('#result').html('<pre>登录已过期，请重新登录</pre>');
-                        } else {
-                            $('#result').html('<pre>Error occurred!</pre>');
-                        }
+                        $('#result').html('<pre>Error occurred!</pre>');
                     }
                 });
             });
@@ -253,21 +166,16 @@
                     url: '/vps/create-and-install',
                     type: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({ region: region, xrayschema: xrayschema, duration: duration}),
+                    data: JSON.stringify({ password: getPassword(), region: region, xrayschema: xrayschema, duration: duration}),
                     success: function (response) {
                         hideLoader();
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
                         // 启动状态检查
                         checkStatus();
                     },
-                    error: function (xhr) {
+                    error: function (response) {
                         hideLoader();
-                        if (xhr.status === 401) {
-                            showLogin();
-                            $('#result').html('<pre>登录已过期，请重新登录</pre>');
-                        } else {
-                            $('#result').html('<pre>Error occurred!</pre>');
-                        }
+                        $('#result').html('<pre>Error occurred!</pre>');
                     }
                 });
             });
@@ -281,19 +189,14 @@
                     url: '/vps/remove',
                     type: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({}),
+                    data: JSON.stringify({ password: getPassword() }),
                     success: function (response) {
                         hideLoader();
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
                     },
-                    error: function (xhr) {
+                    error: function (response) {
                         hideLoader();
-                        if (xhr.status === 401) {
-                            showLogin();
-                            $('#result').html('<pre>登录已过期，请重新登录</pre>');
-                        } else {
-                            $('#result').html('<pre>Error occurred!</pre>');
-                        }
+                        $('#result').html('<pre>Error occurred!</pre>');
                     }
                 });
             });
@@ -308,19 +211,14 @@
                     url: '/vps/xray',
                     type: 'POST',
                     contentType: 'application/json',
-                    data: JSON.stringify({ xrayschema: xrayschema }),
+                    data: JSON.stringify({ password: getPassword(), xrayschema: xrayschema }),
                     success: function (response) {
                         hideLoader();
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
                     },
-                    error: function (xhr) {
+                    error: function (response) {
                         hideLoader();
-                        if (xhr.status === 401) {
-                            showLogin();
-                            $('#result').html('<pre>登录已过期，请重新登录</pre>');
-                        } else {
-                            $('#result').html('<pre>Error occurred!</pre>');
-                        }
+                        $('#result').html('<pre>Error occurred!</pre>');
                     }
                 });
             });

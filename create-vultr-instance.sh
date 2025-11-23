@@ -8,12 +8,12 @@ OUTPUT_FILE=$(mktemp)
 
 # 默认值
 region=$VULTR_INSTANCE_REGION
-xrayschema=tcp
+xrayschema=reality
 
 # 解析命令行选项和参数
 while [[ "$#" -gt 0 ]]; do
     case $1 in
-        --region) region="$2"; shift ;; 
+        --region) region="$2"; shift ;;
         --xrayschema) xrayschema="$2"; shift ;;
         *) echo "Unknown parameter passed: $1"; exit 1 ;;
     esac
