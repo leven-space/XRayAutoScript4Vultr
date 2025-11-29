@@ -47,10 +47,10 @@ else
         sleep 5
     done
 fi
-
 # 将临时文件内容读取到变量中，并发送通知消息至钉钉群组机器人
 MESSAGE_CONTENT=$(<"$OUTPUT_FILE")
 send_dingtalk_message "$MESSAGE_CONTENT"
 
 # 清理：删除临时文件
 rm "$OUTPUT_FILE"
+

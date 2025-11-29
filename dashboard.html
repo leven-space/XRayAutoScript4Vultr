@@ -90,6 +90,18 @@
                         </form>
                     </div>
                 </div>
+                <!-- 定时任务管理卡片 -->
+                <div class="card shadow-sm mb-3">
+                    <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center">
+                        <span><strong>定时删除任务</strong></span>
+                        <button id="refreshScheduleBtn" class="btn btn-sm btn-outline-dark">刷新</button>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="scheduleList">
+                            <div class="text-center text-muted py-3">加载中...</div>
+                        </div>
+                    </div>
+                </div>
                 <div id="loader" class="text-center" style="display: none;">
                     <div class="spinner-border text-primary" role="status">
                         <span class="sr-only">Loading...</span>
@@ -116,7 +128,7 @@
 
         function checkAuthStatus() {
             $.ajax({
-                url: '/api/check-auth',
+                url: '/vps/api/check-auth',
                 type: 'GET',
                 success: function (response) {
                     if (response.logged_in) {
@@ -139,18 +151,131 @@
         function showDashboard() {
             $('#loginSection').hide();
             $('#dashboardSection').show();
+            loadSchedule(); // 登录后加载定时任务
+        }
+
+        // 格式化剩余时间
+        function formatRemainingTime(seconds) {
+            if (seconds <= 0) return '已到期';
+            var hours = Math.floor(seconds / 3600);
+            var minutes = Math.floor((seconds % 3600) / 60);
+            var secs = seconds % 60;
+            if (hours > 0) {
+                return hours + '时' + minutes + '分';
+            } else if (minutes > 0) {
+                return minutes + '分' + secs + '秒';
+            } else {
+                return secs + '秒';
+            }
+        }
+
+        // 格式化时间
+        function formatDateTime(isoString) {
+            var date = new Date(isoString);
+            return date.toLocaleString('zh-CN', { 
+                month: '2-digit', 
+                day: '2-digit', 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+        }
+
+        // 加载定时任务列表
+        function loadSchedule() {
+            $.ajax({
+                url: '/vps/api/schedule',
+                type: 'GET',
+                success: function (response) {
+                    renderScheduleList(response);
+                },
+                error: function (xhr) {
+                    if (xhr.status === 401) {
+                        showLogin();
+                    } else {
+                        $('#scheduleList').html('<div class="text-center text-danger py-3">加载失败</div>');
+                    }
+                }
+            });
+        }
+
+        // 渲染定时任务列表
+        function renderScheduleList(tasks) {
+            if (!tasks || tasks.length === 0) {
+                $('#scheduleList').html('<div class="text-center text-muted py-3">暂无定时任务</div>');
+                return;
+            }
+            
+            var html = '<ul class="list-group list-group-flush">';
+            tasks.forEach(function(task) {
+                var displayId = task.is_all_instances ? '所有实例' : task.instance_id.substring(0, 8) + '...';
+                var remainingText = formatRemainingTime(task.remaining_seconds);
+                var badgeClass = task.remaining_seconds < 300 ? 'badge-danger' : 'badge-warning';
+                
+                html += '<li class="list-group-item d-flex justify-content-between align-items-center py-2">';
+                html += '<div class="small">';
+                html += '<div><strong>' + displayId + '</strong></div>';
+                html += '<div class="text-muted">到期: ' + formatDateTime(task.expire_time) + '</div>';
+                html += '</div>';
+                html += '<div class="d-flex align-items-center">';
+                html += '<span class="badge ' + badgeClass + ' mr-2">' + remainingText + '</span>';
+                html += '<button class="btn btn-sm btn-outline-danger cancel-schedule-btn" data-id="' + task.instance_id + '" title="取消定时删除">&times;</button>';
+                html += '</div>';
+                html += '</li>';
+            });
+            html += '</ul>';
+            
+            $('#scheduleList').html(html);
+        }
+
+        // 取消定时任务
+        function cancelSchedule(instanceId) {
+            if (!confirm('确定要取消该实例的定时删除任务吗？')) {
+                return;
+            }
+            $.ajax({
+                url: '/vps/api/schedule/' + encodeURIComponent(instanceId),
+                type: 'DELETE',
+                success: function (response) {
+                    loadSchedule(); // 重新加载列表
+                },
+                error: function (xhr) {
+                    if (xhr.status === 401) {
+                        showLogin();
+                    } else {
+                        alert('取消失败: ' + (xhr.responseJSON ? xhr.responseJSON.error : '未知错误'));
+                    }
+                }
+            });
+        }
+
+        // 定时刷新任务列表（每30秒）
+        var scheduleRefreshInterval = null;
+        function startScheduleRefresh() {
+            if (scheduleRefreshInterval) clearInterval(scheduleRefreshInterval);
+            scheduleRefreshInterval = setInterval(function() {
+                if ($('#dashboardSection').is(':visible')) {
+                    loadSchedule();
+                }
+            }, 30000);
         }
 
         function checkStatus() {
             $.ajax({
-                url: '/vps/status',
+                url: '/vps/api/status',
                 type: 'GET',
                 success: function (response) {
                     if (response.in_progress) {
-                        $('#result').html('<pre>任务进行中... 请稍候</pre>');
+                        var stageText = {
+                            'creating': '正在创建VPS...',
+                            'waiting': '等待VPS启动...',
+                            'installing': '正在安装Xray...'
+                        };
+                        var statusMsg = stageText[response.stage] || '任务进行中...';
+                        $('#result').html('<pre>' + statusMsg + ' 请稍候</pre>');
                         setTimeout(checkStatus, 5000); // 5秒后再次检查
                     } else {
                         $('#result').html('<pre>任务已完成！</pre>');
+                        loadSchedule(); // 任务完成后刷新定时任务列表
                     }
                 },
                 error: function (xhr) {
@@ -167,6 +292,19 @@
         $(document).ready(function () {
             // 页面加载时检查登录状态
             checkAuthStatus();
+            // 启动定时刷新
+            startScheduleRefresh();
+
+            // 刷新定时任务按钮
+            $('#refreshScheduleBtn').on('click', function() {
+                loadSchedule();
+            });
+
+            // 取消定时任务按钮（事件委托）
+            $(document).on('click', '.cancel-schedule-btn', function() {
+                var instanceId = $(this).data('id');
+                cancelSchedule(instanceId);
+            });
 
             // 登录表单提交
             $('#loginForm').on('submit', function (e) {
@@ -175,7 +313,7 @@
                 $('#loginError').hide();
 
                 $.ajax({
-                    url: '/api/login',
+                    url: '/vps/api/login',
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ password: password }),
@@ -200,7 +338,7 @@
             // 退出登录
             $('#logoutBtn').on('click', function () {
                 $.ajax({
-                    url: '/api/logout',
+                    url: '/vps/api/logout',
                     type: 'POST',
                     success: function () {
                         showLogin();
@@ -219,7 +357,7 @@
 
 
                 $.ajax({
-                    url: '/vps/create',
+                    url: '/vps/api/create',
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ region: region, duration: duration}),
@@ -250,7 +388,7 @@
                 $('#result').html('<pre></pre>');
 
                 $.ajax({
-                    url: '/vps/create-and-install',
+                    url: '/vps/api/create-and-install',
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ region: region, xrayschema: xrayschema, duration: duration}),
@@ -259,6 +397,8 @@
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
                         // 启动状态检查
                         checkStatus();
+                        // 延迟刷新定时任务列表（等待后台任务完成）
+                        setTimeout(loadSchedule, 65000);
                     },
                     error: function (xhr) {
                         hideLoader();
@@ -278,13 +418,15 @@
                 $('#result').html('<pre></pre>');
                 showLoader();
                 $.ajax({
-                    url: '/vps/remove',
+                    url: '/vps/api/remove',
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({}),
                     success: function (response) {
                         hideLoader();
                         $('#result').html('<pre>' + JSON.stringify(response, null, 2) + '</pre>');
+                        // 删除后刷新定时任务列表
+                        loadSchedule();
                     },
                     error: function (xhr) {
                         hideLoader();
@@ -305,7 +447,7 @@
                 var xrayschema = $('#xraySchema').val();
                 $('#result').html('<pre></pre>');
                 $.ajax({
-                    url: '/vps/xray',
+                    url: '/vps/api/xray',
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({ xrayschema: xrayschema }),
