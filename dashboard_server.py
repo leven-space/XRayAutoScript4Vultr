@@ -10,9 +10,36 @@ import hashlib
 from functools import wraps
 from datetime import datetime, timedelta
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+# 配置日志 - 同时输出到文件和控制台
+LOG_FILE = './dashboard_server.log'
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+# 创建logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # 设置最低日志级别
+
+# 清除已有的处理器（避免重复添加）
+logger.handlers.clear()
+
+# 文件处理器 - 记录所有级别的日志，使用追加模式
+file_handler = logging.FileHandler(LOG_FILE, encoding='utf-8', mode='a')
+file_handler.setLevel(logging.DEBUG)
+file_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+file_handler.setFormatter(file_formatter)
+logger.addHandler(file_handler)
+
+# 控制台处理器 - 只显示INFO及以上级别
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+console_handler.setFormatter(console_formatter)
+logger.addHandler(console_handler)
+
+# 防止日志传播到根logger（避免重复输出）
+logger.propagate = False
+
+logger.info(f"日志系统已初始化，日志文件: {os.path.abspath(LOG_FILE)}")
 
 # ============ 常量定义 ============
 VPS_STARTUP_WAIT_SECONDS = 60          # VPS启动等待时间（秒）
