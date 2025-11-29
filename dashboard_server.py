@@ -115,29 +115,54 @@ def login_required(f):
     return decorated_function
 
 def run_shell_script(script_path, args=None):
+    """执行shell脚本，返回执行结果"""
     if args is None:
         args = []
     
-    command = [script_path] + args
-    try:
-        result = subprocess.run(command, check=True,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return {
-            'stdout': result.stdout.decode('utf-8'),
-            'stderr': result.stderr.decode('utf-8'),
-            'exit_code': result.returncode
-        }
-    except subprocess.CalledProcessError as e:
-        return {
-            'stdout': e.stdout.decode('utf-8') if e.stdout else '',
-            'stderr': e.stderr.decode('utf-8') if e.stderr else '',
-            'exit_code': e.returncode
-        }
-    except FileNotFoundError:
+    # 确保脚本路径是绝对路径，或者相对于当前工作目录
+    if not os.path.isabs(script_path):
+        # 如果是相对路径，确保相对于脚本所在目录
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(script_dir, script_path.lstrip('./'))
+    
+    # 检查脚本文件是否存在
+    if not os.path.exists(script_path):
         logger.error(f"脚本文件不存在: {script_path}")
         return {
             'stdout': '',
             'stderr': f'脚本文件不存在: {script_path}',
+            'exit_code': -1
+        }
+    
+    # 在Linux环境下，使用bash执行脚本
+    # 确保脚本有执行权限（如果是在Linux上运行）
+    command = ['bash', script_path] + args
+    
+    try:
+        logger.debug(f"执行脚本: {' '.join(command)}")
+        result = subprocess.run(command, check=False,  # 不抛出异常，手动检查返回码
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                timeout=300)  # 设置5分钟超时，防止脚本卡死
+        stdout_str = result.stdout.decode('utf-8', errors='replace')
+        stderr_str = result.stderr.decode('utf-8', errors='replace')
+        
+        return {
+            'stdout': stdout_str,
+            'stderr': stderr_str,
+            'exit_code': result.returncode
+        }
+    except subprocess.TimeoutExpired:
+        logger.error(f"脚本执行超时: {script_path}")
+        return {
+            'stdout': '',
+            'stderr': f'脚本执行超时（超过5分钟）: {script_path}',
+            'exit_code': -4
+        }
+    except FileNotFoundError:
+        logger.error(f"bash命令不存在，可能不在Linux环境: {script_path}")
+        return {
+            'stdout': '',
+            'stderr': f'bash命令不存在，可能不在Linux环境: {script_path}',
             'exit_code': -1
         }
     except PermissionError:
@@ -148,7 +173,7 @@ def run_shell_script(script_path, args=None):
             'exit_code': -2
         }
     except Exception as e:
-        logger.error(f"执行脚本时发生未知错误: {str(e)}")
+        logger.error(f"执行脚本时发生未知错误: {str(e)}", exc_info=True)
         return {
             'stdout': '',
             'stderr': f'执行脚本时发生错误: {str(e)}',
@@ -157,6 +182,7 @@ def run_shell_script(script_path, args=None):
 
 def scheduled_instance_removal():
     """后台线程：定期检查并删除到期的VPS实例"""
+    logger.info("定时删除线程已启动，开始监控VPS实例...")
     while True:
         try:
             current_time = datetime.now()
@@ -165,54 +191,85 @@ def scheduled_instance_removal():
             
             # 检查哪些VPS需要删除
             with vps_schedule_lock:
+                schedule_count = len(vps_schedule)
+                if schedule_count > 0:
+                    logger.debug(f"当前有 {schedule_count} 个VPS实例在监控列表中")
+                
                 for instance_id, schedule_info in list(vps_schedule.items()):
                     create_time = schedule_info['create_time']
                     duration_minutes = schedule_info['duration_minutes']
                     expire_time = create_time + timedelta(minutes=duration_minutes)
+                    remaining_seconds = (expire_time - current_time).total_seconds()
+                    
+                    logger.debug(f"检查实例 {instance_id}: 创建时间={create_time}, 到期时间={expire_time}, 剩余时间={remaining_seconds:.0f}秒")
                     
                     if current_time >= expire_time:
                         if instance_id == '__all_instances__':
                             should_remove_all = True
-                            logger.info(f"定时删除任务已到期，将删除所有VPS实例 (创建时间: {create_time}, 运行时长: {duration_minutes}分钟)")
+                            logger.warning(f"定时删除任务已到期，将删除所有VPS实例 (创建时间: {create_time}, 运行时长: {duration_minutes}分钟, 当前时间: {current_time})")
                         else:
                             instances_to_remove.append(instance_id)
-                            logger.info(f"VPS {instance_id} 已到期，将在下次检查时删除 (创建时间: {create_time}, 运行时长: {duration_minutes}分钟)")
+                            logger.warning(f"VPS {instance_id} 已到期，将在下次检查时删除 (创建时间: {create_time}, 运行时长: {duration_minutes}分钟, 当前时间: {current_time})")
             
             # 如果有到期的实例，执行删除
             if should_remove_all or instances_to_remove:
                 if should_remove_all:
-                    logger.info("开始删除所有VPS实例（定时任务到期）...")
+                    logger.warning("开始删除所有VPS实例（定时任务到期）...")
                 else:
-                    logger.info(f"开始删除 {len(instances_to_remove)} 个到期的VPS实例...")
+                    logger.warning(f"开始删除 {len(instances_to_remove)} 个到期的VPS实例: {instances_to_remove}")
                 
                 remove_result = run_shell_script('./remove-vultr-instance.sh')
+                
+                logger.info(f"删除脚本执行结果: exit_code={remove_result['exit_code']}, stdout={remove_result['stdout'][:200]}, stderr={remove_result['stderr'][:200]}")
                 
                 if remove_result['exit_code'] == 0:
                     # 删除成功后，从调度字典中移除
                     with vps_schedule_lock:
                         if should_remove_all:
                             vps_schedule.pop('__all_instances__', None)
+                            logger.info("已从调度列表中移除 '__all_instances__' 任务")
                         for instance_id in instances_to_remove:
                             vps_schedule.pop(instance_id, None)
+                            logger.info(f"已从调度列表中移除实例 {instance_id}")
                     save_schedule()  # 保存到文件
-                    logger.info(f"成功删除到期的VPS实例")
+                    logger.warning(f"成功删除到期的VPS实例，已更新调度列表")
                 else:
-                    logger.error(f"删除VPS实例失败: {remove_result['stderr']}")
+                    logger.error(f"删除VPS实例失败 (exit_code={remove_result['exit_code']}): stdout={remove_result['stdout']}, stderr={remove_result['stderr']}")
+            else:
+                # 定期记录监控状态（每10次检查记录一次，避免日志过多）
+                if not hasattr(scheduled_instance_removal, '_check_count'):
+                    scheduled_instance_removal._check_count = 0
+                scheduled_instance_removal._check_count += 1
+                if scheduled_instance_removal._check_count % 10 == 0:
+                    with vps_schedule_lock:
+                        if len(vps_schedule) > 0:
+                            logger.info(f"定时删除线程运行正常，当前监控 {len(vps_schedule)} 个VPS实例")
             
             # 定期检查
             time.sleep(SCHEDULE_CHECK_INTERVAL_SECONDS)
             
         except Exception as e:
-            logger.error(f"定时删除检查过程中发生错误: {str(e)}")
+            logger.error(f"定时删除检查过程中发生错误: {str(e)}", exc_info=True)
             time.sleep(SCHEDULE_CHECK_INTERVAL_SECONDS)
 
 def start_removal_thread():
     """启动定时删除后台线程"""
-    load_schedule()  # 加载之前保存的调度信息
-    removal_thread = threading.Thread(target=scheduled_instance_removal)
-    removal_thread.daemon = True
-    removal_thread.start()
-    logger.info("定时删除后台线程已启动")
+    try:
+        load_schedule()  # 加载之前保存的调度信息
+        removal_thread = threading.Thread(target=scheduled_instance_removal, name="VPSRemovalThread")
+        removal_thread.daemon = True
+        removal_thread.start()
+        logger.info(f"定时删除后台线程已启动 (线程ID: {removal_thread.ident}, 监控间隔: {SCHEDULE_CHECK_INTERVAL_SECONDS}秒)")
+        
+        # 验证线程是否真的在运行
+        import time as time_module
+        time_module.sleep(0.1)  # 短暂等待
+        if removal_thread.is_alive():
+            logger.info("定时删除线程已确认运行中")
+        else:
+            logger.error("警告：定时删除线程启动后立即退出，可能存在问题！")
+    except Exception as e:
+        logger.error(f"启动定时删除线程失败: {str(e)}", exc_info=True)
 
 @app.route('/vps/api/login', methods=['POST'])
 def login():
@@ -318,6 +375,33 @@ def create_and_install():
                 if uuid_match:
                     instance_id = uuid_match.group(0)
 
+            # 关键修复：在VPS创建成功后立即记录创建时间，而不是在安装完成后
+            # 这样确保用户设置的运行时长是从VPS创建时开始计算的
+            create_time = datetime.now()
+            
+            # 如果成功创建并获取到实例ID，立即记录到定时删除列表
+            if instance_id:
+                with vps_schedule_lock:
+                    vps_schedule[instance_id] = {
+                        'create_time': create_time,
+                        'duration_minutes': duration
+                    }
+                save_schedule()  # 保存到文件
+                expire_time = create_time + timedelta(minutes=duration)
+                logger.info(f"VPS {instance_id} 已添加到定时删除列表，将在 {expire_time} 自动删除 (运行时长: {duration}分钟, 创建时间: {create_time})")
+            else:
+                # 如果仍然无法获取实例ID，记录创建时间，定时删除时会删除所有实例
+                logger.warning("未能从创建结果中提取实例ID，将在到期时删除所有实例")
+                with vps_schedule_lock:
+                    # 使用特殊键来标记需要删除所有实例
+                    vps_schedule['__all_instances__'] = {
+                        'create_time': create_time,
+                        'duration_minutes': duration
+                    }
+                save_schedule()  # 保存到文件
+                expire_time = create_time + timedelta(minutes=duration)
+                logger.info(f"将在 {expire_time} 自动删除所有VPS实例 (运行时长: {duration}分钟, 创建时间: {create_time})")
+
             update_task_info(True, 'waiting')
             logger.info(f"VPS创建成功，等待{VPS_STARTUP_WAIT_SECONDS}秒让实例完全启动...")
             time.sleep(VPS_STARTUP_WAIT_SECONDS)
@@ -329,34 +413,10 @@ def create_and_install():
 
             if install_result['exit_code'] != 0:
                 logger.error(f"安装Xray失败: {install_result['stderr']}")
+                # 注意：即使安装失败，定时删除任务已经记录，VPS仍会在到期时被删除
                 return
 
             logger.info("一键创建和安装完成！")
-            
-            # 如果成功创建并获取到实例ID，记录到定时删除列表
-            if instance_id:
-                create_time = datetime.now()
-                with vps_schedule_lock:
-                    vps_schedule[instance_id] = {
-                        'create_time': create_time,
-                        'duration_minutes': duration
-                    }
-                save_schedule()  # 保存到文件
-                expire_time = create_time + timedelta(minutes=duration)
-                logger.info(f"VPS {instance_id} 已添加到定时删除列表，将在 {expire_time} 自动删除 (运行时长: {duration}分钟)")
-            else:
-                # 如果仍然无法获取实例ID，记录创建时间，定时删除时会删除所有实例
-                logger.warning("未能从创建结果中提取实例ID，将在到期时删除所有实例")
-                create_time = datetime.now()
-                with vps_schedule_lock:
-                    # 使用特殊键来标记需要删除所有实例
-                    vps_schedule['__all_instances__'] = {
-                        'create_time': create_time,
-                        'duration_minutes': duration
-                    }
-                save_schedule()  # 保存到文件
-                expire_time = create_time + timedelta(minutes=duration)
-                logger.info(f"将在 {expire_time} 自动删除所有VPS实例 (运行时长: {duration}分钟)")
 
         except Exception as e:
             logger.error(f"一键创建过程中发生错误: {str(e)}")
@@ -450,14 +510,26 @@ def init_removal_thread():
     # 检查是否已经启动过
     if not hasattr(init_removal_thread, '_started'):
         init_removal_thread._started = True
+        logger.info("正在初始化定时删除线程...")
         start_removal_thread()
+    else:
+        logger.debug("定时删除线程已经启动过，跳过重复启动")
 
+# 确保线程总是启动（无论什么模式）
 # 在非debug模式或作为WSGI应用时直接启动
 if os.environ.get('WERKZEUG_RUN_MAIN') == 'true' or not os.environ.get('FLASK_DEBUG'):
+    logger.info("检测到非debug模式或WERKZEUG_RUN_MAIN=true，启动定时删除线程")
     init_removal_thread()
+else:
+    logger.info("检测到debug模式，将在主进程中启动定时删除线程")
 
 if __name__ == '__main__':
     # 在debug模式下，只在reloader子进程中启动
     if os.environ.get('WERKZEUG_RUN_MAIN') == 'true':
+        logger.info("在debug模式的主进程中启动定时删除线程")
+        init_removal_thread()
+    else:
+        # 如果不在reloader子进程，也尝试启动（作为备用）
+        logger.info("不在reloader子进程，尝试启动定时删除线程（备用）")
         init_removal_thread()
     app.run(debug=True, host='0.0.0.0', port=5000)
