@@ -42,7 +42,7 @@ logger.propagate = False
 logger.info(f"日志系统已初始化，日志文件: {os.path.abspath(LOG_FILE)}")
 
 # ============ 常量定义 ============
-VPS_STARTUP_WAIT_SECONDS = 60          # VPS启动等待时间（秒）
+VPS_STARTUP_WAIT_SECONDS = 180          # VPS启动等待时间（秒）
 DEFAULT_VPS_DURATION_MINUTES = 55      # 默认VPS运行时长（分钟）
 SCHEDULE_CHECK_INTERVAL_SECONDS = 60   # 定时检查间隔（秒）
 MIN_VPS_DURATION_MINUTES = 1           # 最小VPS运行时长（分钟）
@@ -227,12 +227,23 @@ def scheduled_instance_removal():
     logger.info("=" * 60)
     
     check_count = 0
+    last_daily_cleanup_date = None  # 记录上次执行每日清理的日期
+
     while True:
         try:
             check_count += 1
             current_time = datetime.now()
             should_remove_all = False
             instances_to_remove = []
+            
+            # 每日凌晨1点强制清理（不管有没有实例，防止漏删）
+            # 时间窗口：01:00 ~ 01:05
+            if current_time.hour == 1 and current_time.minute < 5:
+                # 如果今天还没有执行过清理
+                if last_daily_cleanup_date != current_time.date():
+                    logger.warning(f"[每日清理] ⏰ 时间匹配 (01:00)，触发每日强制清理任务")
+                    should_remove_all = True
+                    last_daily_cleanup_date = current_time.date()
             
             # 检查哪些VPS需要删除
             with vps_schedule_lock:
@@ -310,11 +321,12 @@ def scheduled_instance_removal():
                     # 删除成功后，从调度字典中移除
                     with vps_schedule_lock:
                         if should_remove_all:
-                            vps_schedule.pop('__all_instances__', None)
-                            logger.info("✅ 已从调度列表中移除 '__all_instances__' 任务")
-                        for instance_id in instances_to_remove:
-                            vps_schedule.pop(instance_id, None)
-                            logger.info(f"✅ 已从调度列表中移除实例 {instance_id}")
+                            vps_schedule.clear() # 既然是全部删除，直接清空列表
+                            logger.info("✅ 已清空所有调度任务（全部删除）")
+                        else:
+                            for instance_id in instances_to_remove:
+                                vps_schedule.pop(instance_id, None)
+                                logger.info(f"✅ 已从调度列表中移除实例 {instance_id}")
                     save_schedule()  # 保存到文件
                     logger.warning("✅ 成功删除到期的VPS实例，已更新调度列表")
                 else:
@@ -498,11 +510,12 @@ def create_and_install():
             # 检查脚本执行结果
             if create_result['exit_code'] != 0:
                 logger.error(f"创建VPS脚本执行报错: {create_result['stderr']}")
-                logger.warning("由于脚本报错，中止后续安装步骤。但定时删除任务已添加。")
-                return
+                logger.warning("脚本报错，但根据强制要求，将在3分钟后继续尝试安装Xray。")
+                # 不返回，继续执行
+                # return
 
             update_task_info(True, 'waiting')
-            logger.info(f"VPS创建成功，等待{VPS_STARTUP_WAIT_SECONDS}秒让实例完全启动...")
+            logger.info(f"等待{VPS_STARTUP_WAIT_SECONDS}秒让实例完全启动...")
             time.sleep(VPS_STARTUP_WAIT_SECONDS)
 
             # 第二步：安装Xray（重装）
